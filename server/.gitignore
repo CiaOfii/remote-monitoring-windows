@@ -1,0 +1,31 @@
+
+# Rahasia
+.env
+.env.*
+!.env.example
+server/.env
+
+# Python
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+
+# Node.js
+node_modules/
+**/node_modules/
+
+# Log dan screenshot lokal
+logs/
+*.log
+agent/preview.jpg
+
+# Arsip lokal
+*.zip
+*.tmp
+
+# File editor dan sistem operasi
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

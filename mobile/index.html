@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Remote Monitoring Dashboard</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root { color-scheme: dark; }
+    body { margin: 0; padding: 22px; font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; }
+    .container { max-width: 1280px; margin: auto; }
+    h1 { margin: 0 0 8px; font-size: clamp(26px, 4vw, 36px); }
+    h2, h3 { margin-top: 0; }
+    .muted, .label { color: #94a3b8; }
+    .status { margin: 18px 0; padding: 14px; border-radius: 10px; background: #1e293b; border: 1px solid #334155; }
+    .status strong { margin-right: 6px; }
+    #status { font-weight: 700; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 215px), 1fr)); gap: 16px; }
+    .card { padding: 18px; border-radius: 14px; background: #1e293b; border: 1px solid #334155; min-width: 0; }
+    .label { font-size: 14px; }
+    .value { font-size: 30px; font-weight: bold; margin-top: 12px; overflow-wrap: anywhere; }
+    .detail { margin-top: 10px; overflow-wrap: anywhere; }
+    button { padding: 11px 15px; margin: 6px 7px 6px 0; border: 0; border-radius: 8px; background: #38bdf8; color: #082f49; font-weight: 700; cursor: pointer; }
+    button.secondary { background: #475569; color: white; }
+    button.warning { background: #f59e0b; color: #451a03; }
+    button.danger { background: #ef4444; color: #fff; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: auto; font-size: 12px; }
+    canvas { display: block; width: 100%; height: 180px; }
+    .section-title { margin-bottom: 8px; }
+    .note { font-size: 13px; line-height: 1.5; color: #cbd5e1; }
+    .history { list-style: none; padding: 0; margin: 0; }
+    .history li { padding: 10px 0; border-bottom: 1px solid #334155; overflow-wrap: anywhere; }
+    .history li:last-child { border-bottom: 0; }
+    .history .time { color: #94a3b8; font-size: 12px; margin-bottom: 4px; }
+    .history .app { font-weight: bold; }
+    .screenshot { width: 100%; max-height: 65vh; object-fit: contain; border-radius: 8px; background: #020617; border: 1px solid #334155; }
+    .hidden { display: none !important; }
+    .actions { display: flex; flex-wrap: wrap; gap: 4px; }
+    @media (max-width: 500px) { body { padding: 14px; } .value { font-size: 26px; } .card { padding: 15px; } }
+  </style>
+</head>
+<body>
+<main class="container">
+  <h1>Remote Monitoring</h1>
+  <p class="muted">Pemantauan laptop pribadi melalui jaringan privat Tailscale</p>
+
+  <div class="status">
+    <strong>Status koneksi:</strong> <span id="status">Belum terhubung</span>
+    <div class="muted" id="lastUpdate">Belum menerima data</div>
+    <div class="muted" id="lastScreenshot">Belum menerima screenshot</div>
+  </div>
+
+  <div class="actions">
+    <button id="connectBtn">Hubungkan</button>
+    <button id="disconnectBtn" class="secondary">Putuskan koneksi</button>
+  </div>
+
+  <section class="grid" aria-label="Metrik sistem">
+    <article class="card"><div class="label">Penggunaan CPU</div><div class="value" id="cpu">--</div></article>
+    <article class="card"><div class="label">Penggunaan RAM</div><div class="value" id="ram">--</div></article>
+    <article class="card"><div class="label">Proses / aplikasi aktif</div><div class="value" id="process" style="font-size:22px">--</div><div class="detail" id="windowTitle">--</div></article>
+    <article class="card"><div class="label">Baterai</div><div class="value" id="battery">--</div><div class="detail" id="power">--</div></article>
+  </section>
+
+  <section class="grid" style="margin-top:16px">
+    <article class="card"><h3 class="section-title">Grafik CPU (%)</h3><canvas id="cpuChart" height="180" aria-label="Grafik penggunaan CPU"></canvas></article>
+    <article class="card"><h3 class="section-title">Grafik RAM (%)</h3><canvas id="ramChart" height="180" aria-label="Grafik penggunaan RAM"></canvas></article>
+  </section>
+
+  <section class="grid" style="margin-top:16px">
+    <article class="card">
+      <h3>Riwayat aplikasi aktif</h3>
+      <p class="note">Mencatat pergantian aplikasi/jendela aktif selama halaman ini terbuka. Judul jendela dapat memuat informasi pribadi.</p>
+      <ul id="historyList" class="history"><li class="muted">Menunggu data aplikasi...</li></ul>
+    </article>
+    <article class="card">
+      <h3>Tampilan layar laptop</h3>
+      <p class="note">Screenshot dikirim sekitar setiap 3 detik. Gambar dapat menampilkan pesan, dokumen, atau informasi privat yang terbuka di laptop.</p>
+      <img id="screenPreview" class="screenshot hidden" alt="Screenshot terbaru dari laptop">
+    </article>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <h3>Kendali laptop</h3>
+    <p class="note">Perintah hanya tersedia untuk viewer yang berhasil diautentikasi. Lock mengunci sesi Windows. Shutdown dijadwalkan 30 detik agar masih dapat dibatalkan.</p>
+    <div class="actions">
+      <button id="lockBtn" class="warning" disabled>Lock Windows</button>
+      <button id="shutdownBtn" class="danger" disabled>Shutdown (30 detik)</button>
+      <button id="cancelShutdownBtn" class="secondary" disabled>Batalkan Shutdown</button>
+    </div>
+    <p id="controlResult" role="status" aria-live="polite" class="note">Kendali belum tersedia sebelum terhubung.</p>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <h3>Data terakhir diterima</h3>
+    <pre id="details">Belum ada data.</pre>
+  </section>
+</main>
+
+<script>
+  const RELAY_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+  let socket = null;
+  let lastAppKey = "";
+  const $ = id => document.getElementById(id);
+  const chartHistory = { cpu: [], ram: [] };
+  const MAX_POINTS = 60;
+  const appHistory = [];
+  const MAX_HISTORY = 40;
+
+  function setStatus(text) { $("status").textContent = text; }
+  function setControlsEnabled(enabled) {
+    $("lockBtn").disabled = !enabled;
+    $("shutdownBtn").disabled = !enabled;
+    $("cancelShutdownBtn").disabled = !enabled;
+  }
+
+  function addChartPoint(key, value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return;
+    chartHistory[key].push(Math.max(0, Math.min(100, value)));
+    if (chartHistory[key].length > MAX_POINTS) chartHistory[key].shift();
+  }
+
+  function drawChart(canvasId, values, lineColor) {
+    const canvas = $(canvasId);
+    if (!canvas) return;
+    const width = canvas.clientWidth || 300;
+    const height = 180;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const left = 32, right = 8, top = 12, bottom = 24;
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+    ctx.font = "11px Arial";
+    ctx.fillStyle = "#94a3b8";
+    ctx.strokeStyle = "#334155";
+    ctx.lineWidth = 1;
+    [0, 25, 50, 75, 100].forEach(value => {
+      const y = top + plotHeight * (1 - value / 100);
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(width - right, y); ctx.stroke();
+      ctx.fillText(String(value), 2, y + 4);
+    });
+    if (!values.length) { ctx.fillText("Menunggu data...", left + 8, top + 20); return; }
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    values.forEach((value, index) => {
+      const x = left + (values.length === 1 ? plotWidth : index / (MAX_POINTS - 1) * plotWidth);
+      const y = top + plotHeight * (1 - value / 100);
+      if (!index) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = lineColor;
+    ctx.fillText(`${values[values.length - 1].toFixed(1)}%`, left + 6, top + 12);
+  }
+  function renderCharts() {
+    drawChart("cpuChart", chartHistory.cpu, "#38bdf8");
+    drawChart("ramChart", chartHistory.ram, "#a78bfa");
+  }
+
+  function renderHistory() {
+    const list = $("historyList");
+    list.replaceChildren();
+    if (!appHistory.length) {
+      const empty = document.createElement("li");
+      empty.className = "muted";
+      empty.textContent = "Belum ada riwayat aplikasi.";
+      list.appendChild(empty);
+      return;
+    }
+    for (const entry of appHistory) {
+      const li = document.createElement("li");
+      const time = document.createElement("div");
+      time.className = "time";
+      time.textContent = new Date(entry.timestamp).toLocaleString("id-ID");
+      const app = document.createElement("div");
+      app.className = "app";
+      app.textContent = entry.process || "Proses tidak diketahui";
+      const title = document.createElement("div");
+      title.textContent = entry.title || "(Jendela tanpa judul)";
+      li.append(time, app, title);
+      list.appendChild(li);
+    }
+  }
+
+  function recordAppChange(data) {
+    const windowInfo = data.window || {};
+    const process = String(windowInfo.process || "unknown");
+    const title = String(windowInfo.title || "");
+    const key = process + "\n" + title;
+    if (key === lastAppKey) return;
+    lastAppKey = key;
+    appHistory.unshift({ timestamp: data.timestamp || new Date().toISOString(), process, title });
+    if (appHistory.length > MAX_HISTORY) appHistory.pop();
+    renderHistory();
+  }
+
+  function updateDashboard(data) {
+    const system = data.system || {};
+    const windowInfo = data.window || {};
+    const cpu = system.cpu_percent;
+    const ram = system.ram_percent;
+    const battery = system.battery_percent;
+    const processName = windowInfo.process || windowInfo.title;
+    const plugged = system.plugged_in;
+    addChartPoint("cpu", cpu);
+    addChartPoint("ram", ram);
+    renderCharts();
+    recordAppChange(data);
+    $("cpu").textContent = cpu == null ? "--" : `${cpu}%`;
+    $("ram").textContent = ram == null ? "--" : `${ram}%`;
+    $("battery").textContent = battery == null ? "--" : `${battery}%`;
+    $("process").textContent = processName == null ? "--" : String(processName);
+    $("windowTitle").textContent = windowInfo.title || "Judul jendela tidak tersedia";
+    $("power").textContent = plugged == null ? "Status daya tidak tersedia" : plugged ? "Terhubung ke charger" : "Menggunakan baterai";
+    const timestamp = data.timestamp ? new Date(data.timestamp) : new Date();
+    $("lastUpdate").textContent = "Data diterima: " + timestamp.toLocaleString("id-ID");
+    $("details").textContent = JSON.stringify(data, null, 2);
+  }
+
+  function updateScreenshot(data) {
+    if (!data || typeof data.image_data !== "string" || !data.image_data.startsWith("data:image/jpeg;base64,")) return;
+    $("screenPreview").src = data.image_data;
+    $("screenPreview").classList.remove("hidden");
+    const time = data.timestamp ? new Date(data.timestamp) : new Date();
+    $("lastScreenshot").textContent = "Screenshot diterima: " + time.toLocaleString("id-ID");
+  }
+
+  function handleMessage(message) {
+    if (!message || typeof message !== "object") return;
+    if (message.type === "telemetry" && message.data) {
+      updateDashboard(message.data);
+      setStatus("Terhubung");
+      return;
+    }
+    if (message.type === "screenshot") {
+      updateScreenshot(message.data);
+      return;
+    }
+    if (message.type === "command_status" && message.data) {
+      $("controlResult").textContent = message.data.message || "Perintah diteruskan.";
+      return;
+    }
+    if (message.type === "command_result" && message.data) {
+      const data = message.data;
+      const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString("id-ID") : "";
+      $("controlResult").textContent = `${data.success ? "Berhasil" : "Gagal"}: ${data.message || "Tidak ada detail"}${time ? " (" + time + ")" : ""}`;
+    }
+  }
+
+  async function connect() {
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+    const token = prompt("Masukkan MONITOR_TOKEN dari server/.env. Jangan bagikan token ini.");
+    if (!token) { setStatus("Koneksi dibatalkan"); return; }
+    setStatus("Memeriksa autentikasi...");
+    try {
+      const response = await fetch("/api/viewer-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ticket) throw new Error(result.error || "Autentikasi gagal");
+      const ws = new WebSocket(`${RELAY_URL}?ticket=${encodeURIComponent(result.ticket)}`, ["monitor-viewer"]);
+      socket = ws;
+      ws.onopen = () => {
+        setStatus("Terhubung, menunggu data...");
+        setControlsEnabled(true);
+      };
+      ws.onmessage = event => {
+        try { handleMessage(JSON.parse(event.data)); }
+        catch (error) { console.error("Pesan server tidak valid:", error); }
+      };
+      ws.onerror = () => setStatus("Koneksi mengalami error");
+      ws.onclose = () => {
+        if (socket === ws) socket = null;
+        setControlsEnabled(false);
+        setStatus("Koneksi terputus");
+      };
+    } catch (error) {
+      setStatus("Gagal: " + error.message);
+      setControlsEnabled(false);
+      console.error("Kesalahan koneksi:", error);
+    }
+  }
+
+  function disconnect() {
+    if (socket) { const ws = socket; socket = null; ws.close(); }
+    setControlsEnabled(false);
+    setStatus("Terputus");
+  }
+
+  function sendCommand(command) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      $("controlResult").textContent = "Hubungkan dashboard terlebih dahulu.";
+      return;
+    }
+    socket.send(JSON.stringify({ type: "command", command }));
+    $("controlResult").textContent = "Mengirim perintah ke laptop...";
+  }
+
+  $("connectBtn").addEventListener("click", connect);
+  $("disconnectBtn").addEventListener("click", disconnect);
+  $("lockBtn").addEventListener("click", () => {
+    if (confirm("Kunci laptop Windows sekarang? Kamu perlu membuka laptop secara normal untuk menggunakannya kembali.")) sendCommand("lock");
+  });
+  $("shutdownBtn").addEventListener("click", () => {
+    if (!confirm("Shutdown laptop ini? Proses shutdown akan dijadwalkan 30 detik lagi.")) return;
+    const confirmation = prompt('Untuk mengonfirmasi shutdown, ketik MATIKAN.');
+    if (confirmation === "MATIKAN") sendCommand("shutdown");
+    else $("controlResult").textContent = "Shutdown dibatalkan karena konfirmasi tidak cocok.";
+  });
+  $("cancelShutdownBtn").addEventListener("click", () => {
+    if (confirm("Batalkan shutdown yang sedang tertunda di laptop?")) sendCommand("cancel_shutdown");
+  });
+  window.addEventListener("resize", renderCharts);
+  renderCharts();
+  setControlsEnabled(false);
+</script>
+</body>
+</html>

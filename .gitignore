@@ -1,0 +1,30 @@
+﻿# Secrets and environment configuration
+.env
+.env.*
+!.env.example
+server/.env
+
+# Python
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+
+# Node.js
+node_modules/
+**/node_modules/
+
+# Logs and monitoring output
+logs/
+*.log
+agent/preview.jpg
+
+# Local IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Archives and temporary files
+*.zip
+*.tmp
